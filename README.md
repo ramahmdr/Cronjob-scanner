@@ -10,14 +10,14 @@ Tool sederhana untuk mendeteksi potensi **Privilege Escalation via Cron Job** ak
 Jalankan tool:
 
 ```bash
-python3 cron_root_audit.py
+python3 cjs.py
 ```
 
 Atau jadikan executable:
 
 ```bash
-chmod +x cron_root_audit.py
-./cron_root_audit.py
+chmod +x cjs.py
+./cjs.py
 ```
 
 ---
