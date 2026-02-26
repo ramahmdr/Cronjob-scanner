@@ -1,131 +1,138 @@
 #!/usr/bin/env python3
-
 import os
-import stat
 import pwd
-import grp
+import re
 
-# ====== COLOR CONFIG ======
+# ===== COLOR CONFIG =====
 RED = "\033[91m"
 YELLOW = "\033[93m"
 GREEN = "\033[92m"
 BLUE = "\033[94m"
+CYAN = "\033[96m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
 
-CRON_PATHS = [
-    "/etc/crontab",
-    "/etc/cron.d",
-]
+print(BOLD + CYAN + "="*60 + RESET)
+print(BOLD + CYAN + "   Sibermuda CronHunter v2 - Advanced Scanner" + RESET)
+print(BOLD + CYAN + "="*60 + RESET)
 
-def color_print(text, color):
-    print(color + text + RESET)
+CURRENT_USER = pwd.getpwuid(os.getuid()).pw_name
+
+def is_writable(path):
+    return os.access(path, os.W_OK)
 
 def get_owner(path):
-    st = os.stat(path)
-    return pwd.getpwuid(st.st_uid).pw_name, st.st_mode
+    return pwd.getpwuid(os.stat(path).st_uid).pw_name
 
-def is_writable_by_non_root(path):
-    st = os.stat(path)
-    mode = st.st_mode
-    if mode & stat.S_IWOTH:
-        return True
-    if mode & stat.S_IWGRP:
-        return True
-    return False
+def info(msg):
+    print(BLUE + "[INFO] " + RESET + msg)
 
-def check_file_security(path, context="binary"):
+def good(msg):
+    print(GREEN + "[OK] " + RESET + msg)
+
+def warn(msg):
+    print(YELLOW + "[WARNING] " + RESET + msg)
+
+def critical(msg):
+    print(RED + BOLD + "[CRITICAL] " + RESET + msg)
+
+# ===== CHECK CRON FILES =====
+def check_cron_files():
+    print("\n" + CYAN + "[+] Checking cron configuration files...\n" + RESET)
+    cron_paths = [
+        "/etc/crontab",
+        "/etc/cron.d",
+        "/var/spool/cron",
+        "/var/spool/cron/crontabs"
+    ]
+
+    for path in cron_paths:
+        if os.path.exists(path):
+            info(f"Found: {path}")
+
+            if is_writable(path):
+                critical(f"{path} writable by {CURRENT_USER}")
+
+            owner = get_owner(path)
+            if owner != "root":
+                critical(f"{path} owned by {owner}, not root")
+            else:
+                good(f"{path} owned by root")
+
+# ===== EXTRACT SCRIPTS =====
+def extract_scripts_from_cron():
+    scripts = []
     try:
-        owner, mode = get_owner(path)
-    except:
-        return
-
-    perm = oct(mode)[-3:]
-
-    print(f"        → {context}: {path}")
-    print(f"          Owner: {owner}")
-    print(f"          Perm : {perm}")
-
-    # Root execution risk
-    if owner != "root":
-        color_print("          [CRITICAL] Executed file NOT owned by root!", RED)
-
-    if is_writable_by_non_root(path):
-        color_print("          [CRITICAL] File writable by non-root!", RED)
-
-    if owner == "root" and not is_writable_by_non_root(path):
-        color_print("          [SAFE] Ownership & permission look good", GREEN)
-
-
-def extract_binary(cmd):
-    parts = cmd.split()
-    for p in parts:
-        if p.startswith("/"):
-            return p
-    return None
-
-
-def scan_cron_file(path):
-    try:
-        owner, mode = get_owner(path)
-    except:
-        return
-
-    print(f"\n{BOLD}{BLUE}[+] Checking: {path}{RESET}")
-    print(f"    Owner: {owner}")
-    print(f"    Perm : {oct(mode)[-3:]}")
-
-    if owner != "root":
-        color_print("    [CRITICAL] Cron file not owned by root!", RED)
-
-    if is_writable_by_non_root(path):
-        color_print("    [CRITICAL] Cron file writable by non-root!", RED)
-
-    try:
-        with open(path, "r") as f:
+        with open("/etc/crontab", "r") as f:
             lines = f.readlines()
+            for line in lines:
+                if not line.startswith("#") and len(line.split()) >= 7:
+                    cmd = " ".join(line.split()[6:])
+                    scripts.append(cmd.split()[0])
     except:
+        pass
+    return list(set(scripts))
+
+# ===== ANALYZE SCRIPT =====
+def analyze_script(script_path):
+    if not os.path.exists(script_path):
         return
 
-    for line in lines:
-        if line.strip() == "" or line.startswith("#"):
-            continue
+    print("\n" + CYAN + f"[ANALYZING] {script_path}" + RESET)
 
-        parts = line.split()
-        if len(parts) < 6:
-            continue
+    if is_writable(script_path):
+        critical("Script is writable!")
 
-        user = parts[5]
-        command = " ".join(parts[6:])
+    owner = get_owner(script_path)
+    if owner != "root":
+        warn(f"Script owned by {owner}")
+    else:
+        good("Script owned by root")
 
-        print(f"\n      → Runs as: {user}")
-        print(f"      → Command: {command}")
-
-        binary = extract_binary(command)
-
-        if binary and os.path.exists(binary):
-            check_file_security(binary)
-        elif binary:
-            color_print("          [WARNING] Binary path does not exist", YELLOW)
-
-
-def scan_directory(path):
     try:
-        files = os.listdir(path)
-    except PermissionError:
-        color_print(f"[INFO] Permission denied: {path}", YELLOW)
-        return
+        with open(script_path, "r") as f:
+            content = f.read()
 
-    for file in files:
-        full = os.path.join(path, file)
-        if os.path.isfile(full):
-            scan_cron_file(full)
+            if "*" in content:
+                warn("Wildcard (*) detected — possible injection")
 
+            if re.search(r"\b(tar|cp|mv|bash|sh|python)\b", content):
+                if not re.search(r"/(bin|usr/bin|usr/local/bin)/", content):
+                    warn("Relative binary execution — PATH hijack possible")
 
-print(BOLD + "\n=== Cronjob Misconfiguratin ===\n" + RESET)
+            cd_matches = re.findall(r"cd\s+([^\n]+)", content)
+            for directory in cd_matches:
+                directory = directory.strip()
+                if os.path.exists(directory) and is_writable(directory):
+                    critical(f"Script operates inside writable dir: {directory}")
 
-for path in CRON_PATHS:
-    if os.path.isfile(path):
-        scan_cron_file(path)
-    elif os.path.isdir(path):
-        scan_directory(path)
+            if "--checkpoint-action" in content:
+                critical("Tar checkpoint-action detected!")
+
+    except:
+        warn("Could not read script")
+
+# ===== CHECK PATH =====
+def check_path():
+    print("\n" + CYAN + "[+] Checking PATH for hijacking...\n" + RESET)
+    path_dirs = os.environ.get("PATH", "").split(":")
+    for d in path_dirs:
+        if os.path.exists(d) and is_writable(d):
+            critical(f"Writable PATH directory: {d}")
+        else:
+            good(f"{d} safe")
+
+# ===== MAIN =====
+def main():
+    check_cron_files()
+    scripts = extract_scripts_from_cron()
+
+    for script in scripts:
+        analyze_script(script)
+
+    check_path()
+
+    print("\n" + GREEN + BOLD + "[✔] Scan Complete.\n" + RESET)
+
+if __name__ == "__main__":
+    main()
