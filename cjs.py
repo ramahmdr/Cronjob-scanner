@@ -13,7 +13,7 @@ RESET = "\033[0m"
 BOLD = "\033[1m"
 
 print(BOLD + CYAN + "="*60 + RESET)
-print(BOLD + CYAN + "   Sibermuda CronHunter v2 - Advanced Scanner" + RESET)
+print(BOLD + CYAN + "   Cronjob Scanner" + RESET)
 print(BOLD + CYAN + "="*60 + RESET)
 
 CURRENT_USER = pwd.getpwuid(os.getuid()).pw_name
@@ -135,4 +135,5 @@ def main():
     print("\n" + GREEN + BOLD + "[✔] Scan Complete.\n" + RESET)
 
 if __name__ == "__main__":
+
     main()
