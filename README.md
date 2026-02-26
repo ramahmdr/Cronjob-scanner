@@ -67,9 +67,8 @@ Berarti bisa di‑exploit.
 
 ---
 
-# 💣 Exploit Flow (Lab Only)
+# 💣 Exploit
 
-> ⚠ Gunakan hanya di lab / authorized environment.
 
 ---
 
